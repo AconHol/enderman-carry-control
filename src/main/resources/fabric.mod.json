@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "enderman_carry_control",
+  "version": "${version}",
+  "name": "Enderman Carry Control",
+  "description": "Server-side control of the blocks endermen may pick up and place. Vanilla behavior is preserved by default.",
+  "authors": ["AconHol"],
+  "contact": {
+    "homepage": "https://github.com/AconHol/enderman-carry-control",
+    "sources": "https://github.com/AconHol/enderman-carry-control",
+    "issues": "https://github.com/AconHol/enderman-carry-control/issues"
+  },
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["io.github.aconhol.endermancarry.EndermanCarryControl"]
+  },
+  "mixins": ["enderman-carry-control.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "26.2",
+    "java": ">=25",
+    "fabric-api": ">=0.161.0"
+  }
+}

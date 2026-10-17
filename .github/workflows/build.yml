@@ -1,0 +1,35 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build and run unit and server game tests
+        run: chmod +x gradlew && ./gradlew build --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enderman-carry-control
+          path: build/libs/*.jar
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            build/reports/
+            build/test-results/
+            build/gametest-results.xml
+            build/run/gameTest/logs/
