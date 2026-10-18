@@ -4,12 +4,14 @@
 
 ## 安装
 
-1. 服务端使用 Java 25 或更新版本、Minecraft **26.2**、Fabric Loader **0.19.5+**。
-2. 将 Release 中的 `enderman-carry-control-1.1.0+mc26.2.jar` 放入服务端 `mods/`，升级时移除旧版本 JAR。
-3. 将 **26.2 对应的 Fabric API 0.161.0+** 也放入 `mods/`。
+1. 服务端使用 Java 25 或更新版本、Minecraft **26.2**、Fabric Loader **0.19.3+**。
+2. 将 Release 中的 `enderman-carry-control-1.1.1+mc26.2.jar` 放入服务端 `mods/`，升级时移除旧版本 JAR。
+3. 将 **26.2 对应的 Fabric API 0.156.0+** 也放入 `mods/`。
 4. 重启服务端。首次启动生成 `config/enderman-carry-control.json`，初始行为与原版一致。
 
 下载：[Mod Release](https://github.com/AconHol/enderman-carry-control/releases/latest) · [Fabric](https://fabricmc.net/use/server/) · [Fabric API](https://modrinth.com/mod/fabric-api/versions?g=26.2)
+
+1.1.1 将最低依赖调整为 Loader 0.19.3 / Fabric API 0.156.0+26.2，并以这组版本运行完整 GUI 和搬运测试。使用这组依赖的现有服务器无需升级基础组件；1.1.0 的全部 GUI 功能保留。
 
 ## 箱子式配置界面（1.1.0 新增）
 
@@ -146,7 +148,7 @@ JSON 中的 ID 须包含命名空间；标签以 `#` 开头。修改文件后执
 
 ## 构建与测试
 
-需要 JDK 25。项目固定 Minecraft 26.2、Fabric Loader 0.19.5、Fabric API 0.161.0+26.2、Fabric Loom 1.18.4 和 Gradle 9.7.1。
+需要 JDK 25。项目固定 Minecraft 26.2、Fabric Loader 0.19.3、Fabric API 0.156.0+26.2、Fabric Loom 1.18.4 和 Gradle 9.7.1。
 
 ```powershell
 .\gradlew.bat build --console=plain
