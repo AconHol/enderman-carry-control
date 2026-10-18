@@ -1,24 +1,51 @@
 # Enderman Carry Control · 末影人搬运控制
 
-适用于 **Minecraft Java 26.2 + Fabric** 的纯服务端 Mod。分别控制末影人能拿起哪些方块、能放下哪些方块，支持指令即时修改并持久保存。玩家客户端无需安装。
+适用于 **Minecraft Java 26.2 + Fabric** 的纯服务端 Mod。分别控制末影人能拿起哪些方块、能放下哪些方块，支持箱子式 GUI 和指令即时修改并持久保存。玩家客户端无需安装。
 
 ## 安装
 
 1. 服务端使用 Java 25 或更新版本、Minecraft **26.2**、Fabric Loader **0.19.5+**。
-2. 将 Release 中的 `enderman-carry-control-1.0.0+mc26.2.jar` 放入服务端 `mods/`。
+2. 将 Release 中的 `enderman-carry-control-1.1.0+mc26.2.jar` 放入服务端 `mods/`，升级时移除旧版本 JAR。
 3. 将 **26.2 对应的 Fabric API 0.161.0+** 也放入 `mods/`。
 4. 重启服务端。首次启动生成 `config/enderman-carry-control.json`，初始行为与原版一致。
 
 下载：[Mod Release](https://github.com/AconHol/enderman-carry-control/releases/latest) · [Fabric](https://fabricmc.net/use/server/) · [Fabric API](https://modrinth.com/mod/fabric-api/versions?g=26.2)
 
+## 箱子式配置界面（1.1.0 新增）
+
+游戏内执行 **`/ecc gui`** 或 `/endermancarry gui`，打开原版六行箱子式界面。需要 OP 2 级权限，客户端无需安装任何 Mod 或资源包。
+
+- 点击“拿起规则”或“放下规则”，分别选择原版、白名单、黑名单、全部允许、全部禁止。当前选项带绿色勾选和闪光。
+- 点击“选择方块”或“选择方块标签”，翻页浏览并点击条目加入名单；已选条目再次点击即可移除。
+- 点击“编辑当前名单”查看已添加的方块和标签，点击条目移除。
+- **点击下方背包中的方块**即可将它加入当前名单，也可点击“添加主手方块”。实际物品不会被移动或消耗。
+- 所有修改立即生效并保存。添加名单不会自动切换模式，使用名单时需选择白名单或黑名单。
+- “清空当前名单”和“恢复全部原版规则”会打开确认页面，点击绿色确认或红色取消。
+- 可在界面中重新加载手动修改的配置文件；加载失败时保留当前规则。
+- 浏览页面支持上一页/下一页，右键翻页按钮可跳转 10 页。底部可切换拿起/放下、查看名单、切换方块/标签、返回主页或关闭。
+
+快速打开指定配置，或按方块 ID 关键字筛选：
+
+```mcfunction
+/ecc gui pickup
+/ecc gui place
+/ecc gui pickup stone
+/ecc gui pickup minecraft:oak
+```
+
+搜索不区分大小写，匹配 ID 的命名空间及路径；浏览页面的望远镜按钮可清除筛选。多个管理员同时编辑，或通过指令修改配置时，已打开的界面会自动刷新；收到旧页面的点击时会先刷新页面，避免误操作。权限被撤销后，已打开的界面也不能继续修改。
+
+界面内的物品都是按钮：普通点击操作配置，Shift、数字键、拖拽、双击、丢弃和创造模式复制不会转移按钮或背包物品。GUI 指令只能由游戏内玩家执行；控制台和 RCON 继续使用下文的文本指令。
+
 ## 指令
 
-主指令 `/endermancarry`，简写 `/ecc`。需要 **OP 2 级**；控制台和 RCON 可使用。控制台中省略开头的 `/`。所有修改立即生效、自动写入配置，重启后保留。
+主指令 `/endermancarry`，简写 `/ecc`。需要 **OP 2 级**；除 GUI 外，控制台和 RCON 可使用。控制台中省略开头的 `/`。所有修改立即生效、自动写入配置，重启后保留。
 
 | 指令 | 用途 |
 | --- | --- |
 | `/ecc` 或 `/ecc status` | 查看拿起、放下规则及名单 |
 | `/ecc help` | 查看帮助 |
+| `/ecc gui [pickup或place] [关键词]` | 打开箱子式配置界面，可指定规则和筛选方块 |
 | `/ecc pickup mode <模式>` | 设置拿起模式 |
 | `/ecc place mode <模式>` | 设置放下模式 |
 | `/ecc <pickup或place> add <方块ID或#标签>` | 添加名单条目 |

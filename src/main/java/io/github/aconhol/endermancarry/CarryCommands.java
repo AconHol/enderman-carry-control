@@ -30,6 +30,7 @@ public final class CarryCommands {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("endermancarry")
                 .requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
                 .executes(CarryCommands::status)
+                .then(guiNode())
                 .then(Commands.literal("status").executes(CarryCommands::status))
                 .then(Commands.literal("help").executes(CarryCommands::help))
                 .then(Commands.literal("reload").executes(CarryCommands::reload))
@@ -45,6 +46,24 @@ public final class CarryCommands {
         dispatcher.register(Commands.literal("ecc")
                 .requires(source -> source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
                 .executes(CarryCommands::status).redirect(command));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> guiNode() {
+        var gui = Commands.literal("gui").executes(context -> openGui(context, Action.PICKUP, ""));
+        for (Action action : Action.values()) {
+            gui.then(Commands.literal(action.id())
+                    .executes(context -> openGui(context, action, ""))
+                    .then(Commands.argument("filter", StringArgumentType.greedyString())
+                            .executes(context -> openGui(context, action, StringArgumentType.getString(context, "filter")))));
+        }
+        return gui;
+    }
+
+    private static int openGui(CommandContext<CommandSourceStack> context, Action action, String filter)
+            throws CommandSyntaxException {
+        var player = context.getSource().getPlayerOrException();
+        if (!CarryConfigMenu.open(player, action, filter)) throw error("无法打开配置界面，请确认仍拥有 OP 2 级权限。");
+        return 1;
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> actionNode(Action action) {
@@ -150,7 +169,8 @@ public final class CarryCommands {
     }
 
     private static int help(CommandContext<CommandSourceStack> context) {
-        context.getSource().sendSuccess(() -> Component.literal("[ECC] /ecc status | check <方块ID> | reload | reset\n"
+        context.getSource().sendSuccess(() -> Component.literal("[ECC] /ecc gui [pickup|place] [方块ID关键词] 打开箱子配置界面\n"
+                + "/ecc status | check <方块ID> | reload | reset\n"
                 + "/ecc <pickup|place> mode <vanilla|whitelist|blacklist|all|none>\n"
                 + "/ecc <pickup|place> add|remove <方块ID或#命名空间:标签> | clear | list\n"
                 + "blacklist 只从原版范围排除；whitelist 可扩展拿起范围。修改立即生效并保存。"), false);

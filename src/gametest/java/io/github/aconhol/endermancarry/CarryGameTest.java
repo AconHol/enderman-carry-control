@@ -6,6 +6,12 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.permissions.PermissionSet;
+import net.minecraft.server.permissions.LevelBasedPermissionSet;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.MenuType;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityTypes;
@@ -17,6 +23,7 @@ import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.gametest.framework.GameTestHelper;
 
 import java.nio.file.Files;
+import java.util.Optional;
 
 import static io.github.aconhol.endermancarry.CarryConfig.*;
 
@@ -128,12 +135,127 @@ public final class CarryGameTest {
                     "vanilla clients must receive block ID suggestions");
             dispatcher.execute("ecc reset", source);
             require(store.current().equals(CarryConfig.defaults()), "reset must restore vanilla settings");
+            testConfigGui(helper, dispatcher, source);
             helper.succeed();
         } finally {
             enderman.discard();
             level.getGameRules().set(GameRules.MOB_GRIEFING, griefingBefore, level.getServer());
             store.replace(before);
         }
+    }
+
+    private static void testConfigGui(GameTestHelper helper, CommandDispatcher<CommandSourceStack> dispatcher,
+                                      CommandSourceStack console) throws Exception {
+        ConfigStore store = EndermanCarryControl.config();
+        require(commandFails(dispatcher, "ecc gui", console), "console must receive a player-only error for GUI");
+        ServerPlayer player = helper.makeMockServerPlayerInLevel();
+        var players = helper.getLevel().getServer().getPlayerList();
+        players.op(player.nameAndId(), Optional.of(LevelBasedPermissionSet.GAMEMASTER), Optional.empty());
+        try {
+            CommandSourceStack source = console.withEntity(player);
+            require(dispatcher.execute("ecc gui", source) == 1, "GUI command must open for an operator");
+            require(player.containerMenu instanceof CarryConfigMenu, "server must install the configuration menu");
+            CarryConfigMenu menu = (CarryConfigMenu) player.containerMenu;
+            require(menu.getType() == MenuType.GENERIC_9x6 && menu.slots.size() == 90,
+                    "GUI must use the vanilla six-row chest protocol plus 36 inventory slots");
+            require(menu.slots.stream().noneMatch(slot -> slot.mayPickup(player) || slot.mayPlace(new ItemStack(Items.STONE))),
+                    "all menu and inventory slots must reject actual item transfers");
+
+            click(menu, CarryConfigMenu.MODE_START + Mode.WHITELIST.ordinal(), player);
+            require(store.current().pickup().mode() == Mode.WHITELIST, "GUI mode click must change pickup config");
+            click(menu, CarryConfigMenu.PLACE_SLOT, player);
+            click(menu, CarryConfigMenu.MODE_START + Mode.NONE.ordinal(), player);
+            require(store.current().place().mode() == Mode.NONE && store.current().pickup().mode() == Mode.WHITELIST,
+                    "GUI action tabs must edit independent rules");
+
+            click(menu, CarryConfigMenu.PICKUP_SLOT, player);
+            player.getInventory().setItem(9, new ItemStack(Items.STONE, 64));
+            int stoneSlot = menu.findSlot(player.getInventory(), 9).orElseThrow();
+            click(menu, stoneSlot, player);
+            require(store.current().pickup().blocks().contains("minecraft:stone"), "inventory block click must add its ID");
+            require(player.getInventory().getItem(9).getCount() == 64 && menu.getCarried().isEmpty(),
+                    "adding an inventory block must not move or consume it");
+            CarryConfig unchanged = store.current();
+            for (ContainerInput input : ContainerInput.values()) {
+                if (input == ContainerInput.PICKUP) continue;
+                for (int slot : new int[]{0, stoneSlot, CarryConfigMenu.MODE_START}) {
+                    menu.clicked(slot, 0, input, player);
+                }
+            }
+            require(store.current().equals(unchanged), "shift, swap, clone, drop, drag and double clicks must be ignored");
+            require(menu.quickMoveStack(player, stoneSlot).isEmpty() && player.getInventory().getItem(9).getCount() == 64
+                    && menu.getCarried().isEmpty(), "ignored inventory inputs must not duplicate icons or real items");
+
+            require(dispatcher.execute("ecc gui pickup minecraft:stone", source) == 1, "GUI command must accept namespace filters");
+            menu = (CarryConfigMenu) player.containerMenu;
+            click(menu, findEntry(menu, "minecraft:stone", player), player);
+            require(!store.current().pickup().blocks().contains("minecraft:stone"), "selected browser entry must toggle off");
+            click(menu, findEntry(menu, "minecraft:stone", player), player);
+            require(store.current().pickup().blocks().contains("minecraft:stone"), "unselected browser entry must toggle on");
+            click(menu, 51, player); // Clear the filter, then browse current data pack tags.
+            click(menu, 50, player);
+            int tagSlot = findEntry(menu, "#minecraft:enderman_holdable", player);
+            click(menu, tagSlot, player);
+            require(store.current().pickup().blocks().contains("#minecraft:enderman_holdable"), "GUI tag browser must save a tag entry");
+            click(menu, 48, player);
+            click(menu, findEntry(menu, "#minecraft:enderman_holdable", player), player);
+            require(!store.current().pickup().blocks().contains("#minecraft:enderman_holdable"), "GUI list must remove tags");
+
+            click(menu, 46, player);
+            click(menu, CarryConfigMenu.CLEAR_SLOT, player);
+            require(store.current().pickup().blocks().contains("minecraft:stone"), "clear must wait for confirmation");
+            click(menu, 33, player);
+            require(store.current().pickup().blocks().contains("minecraft:stone"), "cancel must preserve the list");
+            click(menu, CarryConfigMenu.CLEAR_SLOT, player);
+            click(menu, 29, player);
+            require(store.current().pickup().blocks().isEmpty() && store.current().pickup().mode() == Mode.WHITELIST,
+                    "confirmed clear must preserve the selected mode");
+
+            dispatcher.execute("ecc pickup mode all", source);
+            menu.broadcastChanges();
+            require(menu.getContainer().getItem(CarryConfigMenu.MODE_START + Mode.ALL.ordinal())
+                    .getOrDefault(net.minecraft.core.component.DataComponents.ENCHANTMENT_GLINT_OVERRIDE, false),
+                    "open GUI must refresh after a command or another admin changes the config");
+            String valid = Files.readString(store.path());
+            Files.writeString(store.path(), "{ invalid }");
+            click(menu, CarryConfigMenu.RELOAD_SLOT, player);
+            require(store.current().pickup().mode() == Mode.ALL, "failed GUI reload must keep current rules");
+            Files.writeString(store.path(), valid);
+
+            click(menu, CarryConfigMenu.RESET_SLOT, player);
+            click(menu, 29, player);
+            require(store.current().equals(CarryConfig.defaults()), "confirmed GUI reset must restore both vanilla rules");
+            require(ConfigStore.decode(Files.readString(store.path())).equals(store.current()), "GUI edits must persist immediately");
+
+            players.deop(player.nameAndId());
+            require(!menu.stillValid(player), "revoking operator permission must invalidate an open GUI");
+            click(menu, CarryConfigMenu.MODE_START + Mode.NONE.ordinal(), player);
+            require(store.current().equals(CarryConfig.defaults()), "revoked operator must not edit through a stale open menu");
+            require(!CarryConfigMenu.open(player, Action.PICKUP, ""), "non-operators must not open the GUI");
+            require(player.getInventory().getItem(9).getCount() == 64, "closing a GUI must preserve the player's inventory");
+        } finally {
+            player.closeContainer();
+            players.deop(player.nameAndId());
+            player.discard();
+        }
+    }
+
+    private static void click(CarryConfigMenu menu, int slot, ServerPlayer player) {
+        menu.clicked(slot, 0, ContainerInput.PICKUP, player);
+    }
+
+    private static int findEntry(CarryConfigMenu menu, String entry, ServerPlayer player) {
+        menu.clicked(45, 1, ContainerInput.PICKUP, player);
+        for (int page = 0; page < 100; page++) {
+            for (int slot = 0; slot < 45; slot++) {
+                String title = menu.getContainer().getItem(slot).getHoverName().getString();
+                if (title.equals(entry) || title.equals("✓ " + entry)) return slot;
+            }
+            String oldPage = menu.getContainer().getItem(49).getHoverName().getString();
+            click(menu, 53, player);
+            if (oldPage.equals(menu.getContainer().getItem(49).getHoverName().getString())) break;
+        }
+        throw new AssertionError("GUI entry missing: " + entry);
     }
 
     private static Goal goal(String name, EnderMan enderman) throws Exception {
