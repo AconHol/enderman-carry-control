@@ -38,7 +38,7 @@ public final class CarryCommands {
                         ignored -> CarryConfig.defaults(), "已恢复原版拿起和放下规则。")))
                 .then(Commands.literal("check")
                         .then(Commands.argument("block", StringArgumentType.greedyString())
-                                .suggests((context, builder) -> SharedSuggestionProvider.suggest(
+                                .suggests((context, builder) -> suggestEntries(
                                         BuiltInRegistries.BLOCK.keySet().stream().map(Object::toString), builder))
                                 .executes(CarryCommands::check)));
         for (Action action : Action.values()) root.then(actionNode(action));
@@ -49,11 +49,13 @@ public final class CarryCommands {
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> guiNode() {
-        var gui = Commands.literal("gui").executes(context -> openGui(context, Action.PICKUP, ""));
+        var gui = Commands.literal("gui").executes(context -> openGui(context, null, ""));
         for (Action action : Action.values()) {
             gui.then(Commands.literal(action.id())
                     .executes(context -> openGui(context, action, ""))
                     .then(Commands.argument("filter", StringArgumentType.greedyString())
+                            .suggests((context, builder) -> suggestEntries(
+                                    BuiltInRegistries.BLOCK.keySet().stream().map(Object::toString), builder))
                             .executes(context -> openGui(context, action, StringArgumentType.getString(context, "filter")))));
         }
         return gui;
@@ -100,7 +102,11 @@ public final class CarryCommands {
                             ? EndermanCarryControl.config().current().rule(action).blocks().stream()
                             : Stream.concat(BuiltInRegistries.BLOCK.keySet().stream().map(Object::toString),
                                     BuiltInRegistries.BLOCK.getTags().map(tag -> "#" + tag.key().location()));
-                    return SharedSuggestionProvider.suggest(entries, builder);
+                    if (!remove) {
+                        var listed = EndermanCarryControl.config().current().rule(action).blocks();
+                        entries = entries.filter(entry -> !listed.contains(entry));
+                    }
+                    return suggestEntries(entries, builder);
                 })
                 .executes(context -> {
                     String entry;
@@ -118,6 +124,25 @@ public final class CarryCommands {
                         return config.withRule(action, new Rule(old.mode(), blocks));
                     }, (remove ? "已移除 " : "已添加 ") + entry + "；请用 mode 选择名单模式。" );
                 });
+    }
+
+    /** Match both full IDs and short paths, including #tag paths and underscore boundaries. */
+    private static java.util.concurrent.CompletableFuture<com.mojang.brigadier.suggestion.Suggestions>
+    suggestEntries(Stream<String> entries, com.mojang.brigadier.suggestion.SuggestionsBuilder builder) {
+        String remaining = builder.getRemainingLowerCase();
+        boolean tagsOnly = remaining.startsWith("#");
+        String query = tagsOnly ? remaining.substring(1) : remaining;
+        entries.sorted().forEach(entry -> {
+            boolean tag = entry.startsWith("#");
+            if (tagsOnly && !tag) return;
+            String id = tag ? entry.substring(1) : entry;
+            String path = id.substring(id.indexOf(':') + 1);
+            if (SharedSuggestionProvider.matchesSubStr(query, id)
+                    || (!query.contains(":") && SharedSuggestionProvider.matchesSubStr(query, path))) {
+                builder.suggest(entry);
+            }
+        });
+        return builder.buildFuture();
     }
 
     private static int update(CommandContext<CommandSourceStack> context,

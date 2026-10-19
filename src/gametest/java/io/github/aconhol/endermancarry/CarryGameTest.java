@@ -12,6 +12,10 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.network.HashedStack;
+import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMaps;
+import net.minecraft.world.level.GameType;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityTypes;
@@ -147,92 +151,137 @@ public final class CarryGameTest {
     private static void testConfigGui(GameTestHelper helper, CommandDispatcher<CommandSourceStack> dispatcher,
                                       CommandSourceStack console) throws Exception {
         ConfigStore store = EndermanCarryControl.config();
-        require(commandFails(dispatcher, "ecc gui", console), "console must receive a player-only error for GUI");
+        require(commandFails(dispatcher, "ecc gui", console), "console must receive a player-only error");
         ServerPlayer player = helper.makeMockServerPlayerInLevel();
+        player.setGameMode(GameType.SURVIVAL);
         var players = helper.getLevel().getServer().getPlayerList();
         players.op(player.nameAndId(), Optional.of(LevelBasedPermissionSet.GAMEMASTER), Optional.empty());
         try {
             CommandSourceStack source = console.withEntity(player);
-            require(dispatcher.execute("ecc gui", source) == 1, "GUI command must open for an operator");
-            require(player.containerMenu instanceof CarryConfigMenu, "server must install the configuration menu");
+            dispatcher.execute("ecc gui", source);
             CarryConfigMenu menu = (CarryConfigMenu) player.containerMenu;
-            require(menu.getType() == MenuType.GENERIC_9x6 && menu.slots.size() == 90,
-                    "GUI must use the vanilla six-row chest protocol plus 36 inventory slots");
+            require(menu.getType() == MenuType.GENERIC_9x6 && menu.slots.size() == 90, "vanilla chest protocol required");
             require(menu.slots.stream().noneMatch(slot -> slot.mayPickup(player) || slot.mayPlace(new ItemStack(Items.STONE))),
-                    "all menu and inventory slots must reject actual item transfers");
-
-            click(menu, CarryConfigMenu.MODE_START + Mode.WHITELIST.ordinal(), player);
-            require(store.current().pickup().mode() == Mode.WHITELIST, "GUI mode click must change pickup config");
-            click(menu, CarryConfigMenu.PLACE_SLOT, player);
-            click(menu, CarryConfigMenu.MODE_START + Mode.NONE.ordinal(), player);
-            require(store.current().place().mode() == Mode.NONE && store.current().pickup().mode() == Mode.WHITELIST,
-                    "GUI action tabs must edit independent rules");
-
+                    "button GUI must reject real item transfers");
+            require(title(menu, 4).contains("首页"), "bare GUI command must open home");
             click(menu, CarryConfigMenu.PICKUP_SLOT, player);
+            require(title(menu, 4).contains("规则设置"), "home opens rule submenu");
+            click(menu, CarryConfigMenu.LIST_SLOT, player);
+            require(title(menu, 13).contains("先选择名单模式"), "inactive lists must guide users through mode selection");
+            click(menu, CarryConfigMenu.MODE_START + Mode.WHITELIST.ordinal(), player);
+            require(store.current().pickup().mode() == Mode.WHITELIST && title(menu, 4).contains("管理名单"),
+                    "choosing whitelist must continue into list management");
+
             player.getInventory().setItem(9, new ItemStack(Items.STONE, 64));
             int stoneSlot = menu.findSlot(player.getInventory(), 9).orElseThrow();
             click(menu, stoneSlot, player);
-            require(store.current().pickup().blocks().contains("minecraft:stone"), "inventory block click must add its ID");
+            require(store.current().pickup().blocks().isEmpty(), "inventory clicks outside add page must not edit");
+            click(menu, CarryConfigMenu.BLOCKS_SLOT, player);
+            click(menu, stoneSlot, player);
+            require(store.current().pickup().blocks().contains("minecraft:stone"), "add page inventory shortcut must work");
             require(player.getInventory().getItem(9).getCount() == 64 && menu.getCarried().isEmpty(),
-                    "adding an inventory block must not move or consume it");
-            CarryConfig unchanged = store.current();
-            for (ContainerInput input : ContainerInput.values()) {
-                if (input == ContainerInput.PICKUP) continue;
-                for (int slot : new int[]{0, stoneSlot, CarryConfigMenu.MODE_START}) {
-                    menu.clicked(slot, 0, input, player);
-                }
-            }
-            require(store.current().equals(unchanged), "shift, swap, clone, drop, drag and double clicks must be ignored");
-            require(menu.quickMoveStack(player, stoneSlot).isEmpty() && player.getInventory().getItem(9).getCount() == 64
-                    && menu.getCarried().isEmpty(), "ignored inventory inputs must not duplicate icons or real items");
+                    "survival inventory must survive client predictions");
 
-            require(dispatcher.execute("ecc gui pickup minecraft:stone", source) == 1, "GUI command must accept namespace filters");
+            dispatcher.execute("ecc gui pickup minecraft:stone", source);
             menu = (CarryConfigMenu) player.containerMenu;
+            int entry = findEntry(menu, "minecraft:stone", player);
+            click(menu, entry, player);
+            require(store.current().pickup().blocks().contains("minecraft:stone"), "add page must never toggle an entry off");
+            click(menu, CarryConfigMenu.BACK_SLOT, player);
+            require(title(menu, 4).contains("管理名单"), "back must return exactly one level");
+            click(menu, CarryConfigMenu.REMOVE_SLOT, player);
             click(menu, findEntry(menu, "minecraft:stone", player), player);
-            require(!store.current().pickup().blocks().contains("minecraft:stone"), "selected browser entry must toggle off");
-            click(menu, findEntry(menu, "minecraft:stone", player), player);
-            require(store.current().pickup().blocks().contains("minecraft:stone"), "unselected browser entry must toggle on");
-            click(menu, 51, player); // Clear the filter, then browse current data pack tags.
-            click(menu, 50, player);
-            int tagSlot = findEntry(menu, "#minecraft:enderman_holdable", player);
-            click(menu, tagSlot, player);
-            require(store.current().pickup().blocks().contains("#minecraft:enderman_holdable"), "GUI tag browser must save a tag entry");
-            click(menu, 48, player);
+            require(store.current().pickup().blocks().isEmpty(), "remove page must remove an entry");
+            click(menu, CarryConfigMenu.BACK_SLOT, player);
+            click(menu, CarryConfigMenu.TAGS_SLOT, player);
             click(menu, findEntry(menu, "#minecraft:enderman_holdable", player), player);
-            require(!store.current().pickup().blocks().contains("#minecraft:enderman_holdable"), "GUI list must remove tags");
-
-            click(menu, 46, player);
+            require(store.current().pickup().blocks().contains("#minecraft:enderman_holdable"), "tag browser must add tags");
+            click(menu, CarryConfigMenu.BACK_SLOT, player);
             click(menu, CarryConfigMenu.CLEAR_SLOT, player);
-            require(store.current().pickup().blocks().contains("minecraft:stone"), "clear must wait for confirmation");
             click(menu, 33, player);
-            require(store.current().pickup().blocks().contains("minecraft:stone"), "cancel must preserve the list");
+            require(!store.current().pickup().blocks().isEmpty(), "cancel clear must preserve entries");
             click(menu, CarryConfigMenu.CLEAR_SLOT, player);
             click(menu, 29, player);
             require(store.current().pickup().blocks().isEmpty() && store.current().pickup().mode() == Mode.WHITELIST,
-                    "confirmed clear must preserve the selected mode");
+                    "confirmed clear must preserve mode");
 
-            dispatcher.execute("ecc pickup mode all", source);
+            CarryConfig unchanged = store.current();
+            for (ContainerInput input : ContainerInput.values()) {
+                if (input == ContainerInput.PICKUP) continue;
+                sendClick(menu, CarryConfigMenu.BLOCKS_SLOT, 0, input, player);
+                sendClick(menu, stoneSlot, 0, input, player);
+            }
+            require(store.current().equals(unchanged) && player.getInventory().getItem(9).getCount() == 64
+                    && menu.getCarried().isEmpty(), "shift/swap/clone/drop/drag/double click predictions must not edit or move items");
+            click(menu, -999, player);
+            click(menu, 32767, player);
+            sendClick(menu, CarryConfigMenu.BLOCKS_SLOT, 9, ContainerInput.PICKUP, player);
+            require(store.current().equals(unchanged), "invalid slot/button inputs must not edit");
+
+            click(menu, CarryConfigMenu.HOME_SLOT, player);
+            int staleState = menu.getStateId();
+            click(menu, CarryConfigMenu.PLACE_SLOT, player);
+            player.connection.handleContainerClick(new ServerboundContainerClickPacket(
+                    menu.containerId, staleState, (short) CarryConfigMenu.MODE_SLOT, (byte) 0,
+                    ContainerInput.PICKUP, Int2ObjectMaps.emptyMap(), HashedStack.EMPTY));
+            require(title(menu, 4).contains("规则设置"), "stale page click must only resynchronize");
+            player.connection.handleContainerClick(new ServerboundContainerClickPacket(
+                    menu.containerId + 1, menu.getStateId(), (short) CarryConfigMenu.MODE_SLOT, (byte) 0,
+                    ContainerInput.PICKUP, Int2ObjectMaps.emptyMap(), HashedStack.EMPTY));
+            require(title(menu, 4).contains("规则设置"), "wrong container id must not act");
+
+            click(menu, CarryConfigMenu.MODE_SLOT, player);
+            click(menu, CarryConfigMenu.MODE_START + Mode.NONE.ordinal(), player);
+            require(store.current().place().mode() == Mode.NONE && store.current().pickup().mode() == Mode.WHITELIST,
+                    "pickup and place must stay independent");
+            for (GameType mode : new GameType[]{GameType.CREATIVE, GameType.SPECTATOR, GameType.SURVIVAL}) {
+                player.setGameMode(mode);
+                click(menu, CarryConfigMenu.MODE_SLOT, player);
+                require(title(menu, 4).contains("选择模式"), "button clicks must reach menu in " + mode);
+                click(menu, CarryConfigMenu.MODE_START + Mode.NONE.ordinal(), player);
+                require(player.gameMode.getGameModeForPlayer() == mode, "GUI must never change real game mode");
+            }
+
+            click(menu, CarryConfigMenu.MODE_SLOT, player);
+            dispatcher.execute("ecc place mode all", source);
             menu.broadcastChanges();
             require(menu.getContainer().getItem(CarryConfigMenu.MODE_START + Mode.ALL.ordinal())
                     .getOrDefault(net.minecraft.core.component.DataComponents.ENCHANTMENT_GLINT_OVERRIDE, false),
-                    "open GUI must refresh after a command or another admin changes the config");
+                    "open menu must refresh after command changes");
+            click(menu, CarryConfigMenu.HOME_SLOT, player);
+            click(menu, CarryConfigMenu.ADVANCED_SLOT, player);
             String valid = Files.readString(store.path());
             Files.writeString(store.path(), "{ invalid }");
             click(menu, CarryConfigMenu.RELOAD_SLOT, player);
-            require(store.current().pickup().mode() == Mode.ALL, "failed GUI reload must keep current rules");
+            require(store.current().place().mode() == Mode.ALL, "invalid reload must keep live settings");
             Files.writeString(store.path(), valid);
-
             click(menu, CarryConfigMenu.RESET_SLOT, player);
             click(menu, 29, player);
-            require(store.current().equals(CarryConfig.defaults()), "confirmed GUI reset must restore both vanilla rules");
-            require(ConfigStore.decode(Files.readString(store.path())).equals(store.current()), "GUI edits must persist immediately");
+            require(store.current().equals(CarryConfig.defaults()), "confirmed reset must restore both rules");
+            require(ConfigStore.decode(Files.readString(store.path())).equals(store.current()), "GUI must persist edits");
 
+            testSuggestions(dispatcher, source);
+
+            click(menu, CarryConfigMenu.HOME_SLOT, player);
             players.deop(player.nameAndId());
-            require(!menu.stillValid(player), "revoking operator permission must invalidate an open GUI");
-            click(menu, CarryConfigMenu.MODE_START + Mode.NONE.ordinal(), player);
-            require(store.current().equals(CarryConfig.defaults()), "revoked operator must not edit through a stale open menu");
-            require(!CarryConfigMenu.open(player, Action.PICKUP, ""), "non-operators must not open the GUI");
-            require(player.getInventory().getItem(9).getCount() == 64, "closing a GUI must preserve the player's inventory");
+            click(menu, CarryConfigMenu.PICKUP_SLOT, player);
+            require(player.containerMenu != menu && store.current().equals(CarryConfig.defaults()),
+                    "revoked operator must close without editing");
+            require(!CarryConfigMenu.open(player, Action.PICKUP, ""), "non-operators must not open GUI");
+            require(player.getInventory().getItem(9).getCount() == 64, "closing must preserve inventory");
+
+            // This mod's packet interception must leave ordinary chest inventory transfers intact.
+            players.op(player.nameAndId(), Optional.of(LevelBasedPermissionSet.GAMEMASTER), Optional.empty());
+            player.openMenu(new net.minecraft.world.SimpleMenuProvider((id, inv, user) ->
+                    net.minecraft.world.inventory.ChestMenu.sixRows(id, inv), net.minecraft.network.chat.Component.literal("normal")));
+            var chest = player.containerMenu;
+            chest.slots.get(0).set(new ItemStack(Items.DIRT, 3));
+            player.connection.handleContainerClick(new ServerboundContainerClickPacket(
+                    chest.containerId, chest.getStateId(), (short) 0, (byte) 0, ContainerInput.PICKUP,
+                    Int2ObjectMaps.emptyMap(), HashedStack.EMPTY));
+            require(chest.getCarried().is(Items.DIRT) && chest.getCarried().getCount() == 3,
+                    "ordinary chests must still run vanilla click handling");
+            chest.setCarried(ItemStack.EMPTY);
         } finally {
             player.closeContainer();
             players.deop(player.nameAndId());
@@ -240,20 +289,73 @@ public final class CarryGameTest {
         }
     }
 
+    private static void testSuggestions(CommandDispatcher<CommandSourceStack> dispatcher, CommandSourceStack source) throws Exception {
+        assertSuggest(dispatcher, source, "ecc pickup add sto", "minecraft:stone", true);
+        assertSuggest(dispatcher, source, "endermancarry place add minecraft:sto", "minecraft:stone", true);
+        assertSuggest(dispatcher, source, "ecc place add #log", "#minecraft:logs", true);
+        assertSuggest(dispatcher, source, "ecc pickup add #minecraft:log", "#minecraft:logs", true);
+        assertSuggest(dispatcher, source, "ecc gui pickup sto", "minecraft:stone", true);
+        assertSuggest(dispatcher, source, "ecc check sto", "minecraft:stone", true);
+        assertSuggest(dispatcher, source, "ecc pickup remove ", "minecraft:stone", false);
+        dispatcher.execute("ecc pickup add stone", source);
+        dispatcher.execute("ecc pickup add #minecraft:logs", source);
+        assertSuggest(dispatcher, source, "ecc pickup add sto", "minecraft:stone", false);
+        assertSuggest(dispatcher, source, "ecc pickup remove sto", "minecraft:stone", true);
+        assertSuggest(dispatcher, source, "ecc pickup remove #log", "#minecraft:logs", true);
+        assertSuggest(dispatcher, source, "ecc place remove sto", "minecraft:stone", false);
+        dispatcher.execute("ecc pickup remove stone", source);
+        assertSuggest(dispatcher, source, "ecc pickup remove sto", "minecraft:stone", false);
+        dispatcher.execute("ecc reset", source);
+    }
+
+    private static void assertSuggest(CommandDispatcher<CommandSourceStack> dispatcher, CommandSourceStack source,
+                                      String input, String expected, boolean present) throws Exception {
+        var suggestions = dispatcher.getCompletionSuggestions(dispatcher.parse(input, source)).get();
+        // Use the response structure that an unmodified client receives.
+        var response = new net.minecraft.network.protocol.game.ClientboundCommandSuggestionsPacket(7, suggestions);
+        var actual = response.toSuggestions();
+        require(actual.getList().stream().anyMatch(s -> s.getText().equals(expected)) == present,
+                "unexpected completion for " + input + ": " + expected);
+        if (present) require(actual.getList().stream().filter(s -> s.getText().equals(expected))
+                .allMatch(s -> s.apply(input).equals(input.substring(0, input.lastIndexOf(' ') + 1) + expected)),
+                "suggestion must replace only the argument");
+    }
+
     private static void click(CarryConfigMenu menu, int slot, ServerPlayer player) {
-        menu.clicked(slot, 0, ContainerInput.PICKUP, player);
+        sendClick(menu, slot, 0, ContainerInput.PICKUP, player);
+    }
+
+    private static void sendClick(CarryConfigMenu menu, int slot, int button, ContainerInput input, ServerPlayer player) {
+        // Simulate an unmodified client's ChestMenu prediction, including carried icon hashes.
+        var clientInventory = new net.minecraft.world.entity.player.Inventory(player, new net.minecraft.world.entity.EntityEquipment());
+        var client = net.minecraft.world.inventory.ChestMenu.sixRows(menu.containerId, clientInventory);
+        var before = menu.getItems().stream().map(ItemStack::copy).toList();
+        client.initializeContents(menu.getStateId(), before.stream().map(ItemStack::copy).toList(), menu.getCarried().copy());
+        if (slot < 90 && button >= 0 && button <= 1) client.clicked(slot, button, input, player);
+        var changes = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<HashedStack>();
+        for (int i = 0; i < 90; i++) {
+            if (!ItemStack.matches(before.get(i), client.slots.get(i).getItem()))
+                changes.put(i, HashedStack.create(client.slots.get(i).getItem(), component -> 0));
+        }
+        HashedStack carried = HashedStack.create(client.getCarried(), component -> 0);
+        player.connection.handleContainerClick(new ServerboundContainerClickPacket(
+                menu.containerId, menu.getStateId(), (short) slot, (byte) button, input, changes, carried));
+        require(menu.getCarried().isEmpty(), "client prediction must not transfer button to server cursor");
+    }
+
+    private static String title(CarryConfigMenu menu, int slot) {
+        return menu.getContainer().getItem(slot).getHoverName().getString();
     }
 
     private static int findEntry(CarryConfigMenu menu, String entry, ServerPlayer player) {
-        menu.clicked(45, 1, ContainerInput.PICKUP, player);
+        sendClick(menu, CarryConfigMenu.PREVIOUS_SLOT, 1, ContainerInput.PICKUP, player);
         for (int page = 0; page < 100; page++) {
-            for (int slot = 0; slot < 45; slot++) {
-                String title = menu.getContainer().getItem(slot).getHoverName().getString();
-                if (title.equals(entry) || title.equals("✓ " + entry)) return slot;
+            for (int slot = CarryConfigMenu.CONTENT_START; slot < CarryConfigMenu.CONTENT_START + CarryConfigMenu.PAGE_SIZE; slot++) {
+                if (title(menu, slot).equals(entry) || title(menu, slot).equals("✓ " + entry)) return slot;
             }
-            String oldPage = menu.getContainer().getItem(49).getHoverName().getString();
-            click(menu, 53, player);
-            if (oldPage.equals(menu.getContainer().getItem(49).getHoverName().getString())) break;
+            String oldPage = title(menu, CarryConfigMenu.INFO_SLOT);
+            click(menu, CarryConfigMenu.NEXT_SLOT, player);
+            if (oldPage.equals(title(menu, CarryConfigMenu.INFO_SLOT))) break;
         }
         throw new AssertionError("GUI entry missing: " + entry);
     }
