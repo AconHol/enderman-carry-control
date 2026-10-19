@@ -85,6 +85,28 @@ public final class CarryGameTest {
             attemptPickup(level, enderman, pickup, stone);
             require(enderman.getCarriedBlock() == null, "blacklist must preserve vanilla stone rejection");
 
+            // Production report: small brown/red mushrooms must be denied by the live goal,
+            // while other vanilla blocks remain available. Start each attempt empty-handed.
+            for (var mushroom : new net.minecraft.world.level.block.Block[]{Blocks.BROWN_MUSHROOM, Blocks.RED_MUSHROOM}) {
+                dispatcher.execute("ecc reset", source);
+                attemptPickup(level, enderman, pickup, mushroom.defaultBlockState());
+                require(enderman.getCarriedBlock() != null && enderman.getCarriedBlock().is(mushroom),
+                        "mushroom fixture must allow a real vanilla pickup before filtering: " + mushroom);
+                enderman.setCarriedBlock(null);
+                dispatcher.execute("ecc pickup add minecraft:brown_mushroom", source);
+                dispatcher.execute("ecc pickup add minecraft:red_mushroom", source);
+                dispatcher.execute("ecc pickup mode blacklist", source);
+                for (int attempt = 0; attempt < 32; attempt++) {
+                    attemptPickup(level, enderman, pickup, mushroom.defaultBlockState());
+                    require(enderman.getCarriedBlock() == null,
+                            "blacklist must prevent actual small mushroom pickup: " + mushroom);
+                }
+                attemptPickup(level, enderman, pickup, dirt);
+                require(enderman.getCarriedBlock() != null && enderman.getCarriedBlock().is(Blocks.DIRT),
+                        "mushroom blacklist must preserve unrelated dirt pickup");
+                enderman.setCarriedBlock(null);
+            }
+
             dispatcher.execute("ecc pickup mode all", source);
             attemptPickup(level, enderman, pickup, Blocks.CHEST.defaultBlockState());
             require(enderman.getCarriedBlock() == null, "block entity data must be protected");
